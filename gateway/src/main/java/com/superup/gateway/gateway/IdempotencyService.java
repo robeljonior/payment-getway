@@ -1,6 +1,7 @@
 package com.superup.gateway.gateway;
 
 import java.sql.Timestamp;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -25,8 +26,14 @@ public class IdempotencyService {
     }
 
     private record Row(String requestHash, String status, Integer responseStatus, String responseBody,
-                       Instant expiresAt) {
+                       Instant expiresAt, Instant createdAt) {
     }
+
+    /**
+     * A request still IN_PROGRESS after this long has died (for example the gateway restarted). It is
+     * safe to take over, because the orchestrator returns the same payment for the same create key.
+     */
+    private static final Duration STALE_AFTER = Duration.ofSeconds(60);
 
     private final JdbcTemplate db;
 
@@ -62,12 +69,12 @@ public class IdempotencyService {
                 return Optional.empty();
             }
             List<Row> rows = db.query("""
-                    SELECT request_hash, status, response_status, response_body, expires_at
+                    SELECT request_hash, status, response_status, response_body, expires_at, created_at
                       FROM idempotency_keys
                      WHERE merchant_id = ? AND mode = ? AND endpoint = ? AND key = ?
                     """,
                     (rs, i) -> new Row(rs.getString(1), rs.getString(2), (Integer) rs.getObject(3),
-                            rs.getString(4), rs.getTimestamp(5).toInstant()),
+                            rs.getString(4), rs.getTimestamp(5).toInstant(), rs.getTimestamp(6).toInstant()),
                     caller.merchantId(), caller.mode(), endpoint, key);
             if (rows.isEmpty()) {
                 continue;   // it was just removed; try again
@@ -84,6 +91,16 @@ public class IdempotencyService {
                 throw ApiException.idempotencyConflict();
             }
             if ("IN_PROGRESS".equals(row.status())) {
+                if (row.createdAt().isBefore(Instant.now().minus(STALE_AFTER))) {
+                    int taken = db.update("""
+                            UPDATE idempotency_keys SET created_at = now()
+                             WHERE merchant_id = ? AND mode = ? AND endpoint = ? AND key = ?
+                               AND status = 'IN_PROGRESS' AND created_at = ?
+                            """, caller.merchantId(), caller.mode(), endpoint, key, Timestamp.from(row.createdAt()));
+                    if (taken == 1) {
+                        return Optional.empty();
+                    }
+                }
                 throw ApiException.inProgress();
             }
             return Optional.of(new StoredResponse(row.responseStatus(), row.responseBody()));
@@ -91,7 +108,7 @@ public class IdempotencyService {
         throw ApiException.inProgress();
     }
 
-    /** Saves the answer. Call it inside the same transaction as the work, so both commit together. */
+    /** Saves the answer, so a repeat gets exactly the same one. */
     public void complete(Caller caller, String endpoint, String key, int status, String body) {
         db.update("""
                 UPDATE idempotency_keys SET status = 'DONE', response_status = ?, response_body = ?

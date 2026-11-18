@@ -5,7 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superup.gateway.api.CreatePaymentSessionRequest;
 import com.superup.gateway.common.Money;
 import com.superup.gateway.orchestrator.NewPayment;
-import com.superup.gateway.record.MerchantRecords;
+import com.superup.gateway.clients.MerchantRecords;
 import java.util.Map;
 import org.springframework.stereotype.Component;
 

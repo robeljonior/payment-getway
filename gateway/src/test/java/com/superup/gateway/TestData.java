@@ -5,8 +5,7 @@ import com.superup.gateway.gateway.ApiKeyAuthFilter;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
- * Creates fresh clients, keys and providers for each test. Payment rows can never be deleted,
- * so every test uses its own new client instead of cleaning up.
+ * Creates a fresh client and keys for each test, so tests never share data.
  */
 public final class TestData {
 
@@ -37,17 +36,5 @@ public final class TestData {
         db.update("INSERT INTO api_keys (id, merchant_id, mode, type, key_hash, last4) VALUES (?, ?, ?, 'secret', ?, ?)",
                 Ids.newId("key_"), merchantId, mode, ApiKeyAuthFilter.sha256(key), key.substring(key.length() - 4));
         return key;
-    }
-
-    /** A provider with its own code, so ledger balances in a test start from zero. */
-    public static String provider(JdbcTemplate db) {
-        String id = Ids.newId("prov_");
-        db.update("INSERT INTO providers (id, code, name_en, type, connector, status) VALUES (?, ?, 'Test wallet', 'wallet', 'test', 'TESTING')",
-                id, "TEST_" + id.substring(5).toUpperCase());
-        return id;
-    }
-
-    public static String providerCode(JdbcTemplate db, String providerId) {
-        return db.queryForObject("SELECT code FROM providers WHERE id = ?", String.class, providerId);
     }
 }

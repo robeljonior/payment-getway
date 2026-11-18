@@ -1,6 +1,6 @@
 # Payment Gateway (Chapa-style)
 
-**Status:** Draft v0.1 for review. Design only, no code yet.
+**Status:** Draft v0.1 design. Phase 1 code has started in two services: the [gateway](gateway/README.md) in Java and the [orchestrator](orchestrator/README.md) in Go. The connectors are built by others.
 **Date:** 2026-11-18
 
 ## What we are building

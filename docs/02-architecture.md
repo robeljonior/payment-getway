@@ -167,7 +167,32 @@ flowchart TB
 
 ## How it is deployed in phase 1
 
-Following [ADR 002](../../docs/core/adr/002-deployment-shape.md), we start small, with one backend codebase that has strong module boundaries (a modular monolith). It runs in three ways:
+The gateway (layer 1) and the orchestrator (layer 2) are **two separate services**, each with its own folder, language and database. The connectors (layer 3) are built by others, against the orchestrator's connector contract. This is your choice from 18 November 2026: "build the gateway in Java, then the orchestration in Go, separate them in folders".
+
+| Service | Folder | Language | Its own database | Who can reach it |
+|---|---|---|---|---|
+| **Gateway** (layer 1) | [gateway/](../gateway/README.md) | Java, Spring Boot | Clients, their settings and API keys (part 5), idempotency keys | Public internet, behind a load balancer and TLS |
+| **Orchestrator** (layers 2 and 4) | [orchestrator/](../orchestrator/README.md) | Go | Payments (parts 1 to 4), banks and wallets (part 6), the ledger, outbox events, the audit log | Only the gateway, checkout and the connectors, on the private network, with a shared secret |
+| **Connectors** (layer 3) | built by others | any | none of their own for money | Only the orchestrator's internal API, and the banks |
+
+```mermaid
+flowchart LR
+    Client[Client's server] -->|Payment API| GW[Gateway service, Java]
+    GW -->|internal API| ORCH[Orchestrator service, Go]
+    Conn[Connectors, built by others] -->|connector contract| ORCH
+    Conn --> Banks[Banks and wallets]
+    GW --> GDB[(Gateway DB: clients and keys)]
+    ORCH --> ODB[(Orchestrator DB: payments, ledger, events)]
+```
+
+How the two services work together:
+
+- The gateway checks the key, the rate limit, the request and the idempotency key. Then it calls the orchestrator. It passes on the orchestrator's answer as it is.
+- The gateway sends a **create key** made from the client, the mode and the Idempotency-Key. The orchestrator makes one payment per create key, so a retry after a timeout never makes two payments, even if the gateway stopped halfway.
+- The rules that protect money (paid once, results never change, balanced journals) stay inside the orchestrator's database, next to the data they protect.
+- One request ID goes through both services and into the audit log.
+
+Later, the parts below are still split by who can reach them:
 
 | Unit | What runs in it | Who can reach it |
 |---|---|---|
@@ -194,9 +219,11 @@ flowchart LR
 - **Environments:** local, test (sandbox, for clients' developers), staging and live.
 - **Backups:** point-in-time recovery, encrypted copies at a second site, and restore tests every month.
 
-A part becomes its own service only when a measured need (load, release speed, isolation or a regulator) justifies it.
+Any further split into more services should wait for a measured need (load, release speed, isolation or a regulator).
 
 ## Tech stack (decision D1)
+
+**Decided on 18 November 2026:** the gateway is **Java with Spring Boot**, the orchestrator is **Go**, and both use **PostgreSQL**. The options we looked at before that:
 
 | Option | Good | Less good |
 |---|---|---|
