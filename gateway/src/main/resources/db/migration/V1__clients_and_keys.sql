@@ -1,6 +1,6 @@
--- Part 5: clients (merchants) and their API keys.
--- Part 6: banks and wallets (providers).
--- See docs/08-data-model.md.
+-- The gateway service's own database.
+-- Part 5: clients (merchants), their settings and their API keys. See docs/08-data-model.md.
+-- Payments, banks (part 6) and the ledger belong to the orchestrator service and its database.
 
 CREATE TABLE merchants (
     id          text PRIMARY KEY,
@@ -33,18 +33,4 @@ CREATE TABLE api_keys (
     status      text NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'REVOKED')),
     created_at  timestamptz NOT NULL DEFAULT now(),
     revoked_at  timestamptz
-);
-
-CREATE TABLE providers (
-    id          text PRIMARY KEY,
-    code        text NOT NULL UNIQUE,
-    name_en     text NOT NULL,
-    name_am     text,
-    type        text NOT NULL CHECK (type IN ('bank', 'wallet', 'switch', 'card')),
-    connector   text NOT NULL,
-    status      text NOT NULL DEFAULT 'DRAFT'
-                CHECK (status IN ('DRAFT', 'TESTING', 'ACTIVE', 'PAUSED', 'RETIRED')),
-    min_amount  bigint,
-    max_amount  bigint,
-    created_at  timestamptz NOT NULL DEFAULT now()
 );

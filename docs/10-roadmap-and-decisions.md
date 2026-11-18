@@ -46,7 +46,7 @@ This is for when you say "start coding". Each step works and is tested before th
 | **D7** | Where client money is held | A collection account at each provider, or one settlement bank | **Decide with the lawyer and the first bank.** Client money must be kept apart from company money. |
 | **D8** | Refund states | Keep `REFUNDING` and `REFUND_FAILED` as session states, or track refunds on their own | **Track refunds on their own**, and keep the session `SUCCEEDED` until the full amount is refunded ([section 4.4](04-payment-flows.md#44-states)) |
 
-**Decided on 18 November 2026:** D1 is **Java with Spring Boot and PostgreSQL** (your choice). The code is in [gateway/](../gateway/README.md).
+**Decided on 18 November 2026:** D1 is **Java with Spring Boot for the gateway, Go for the orchestrator, and PostgreSQL** (your choice). They are two services in two folders: [gateway/](../gateway/README.md) and [orchestrator/](../orchestrator/README.md). The connectors are built by others, against the [connector contract](../orchestrator/README.md#the-connector-contract).
 
 **Your design (18 November 2026):** payments are kept as success candidates, successes and failures, with one view that shows the current status ([section 8](08-data-model.md#the-six-parts-of-layer-4)).
 

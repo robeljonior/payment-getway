@@ -1,0 +1,52 @@
+# Run the payment gateway on your own computer.
+#
+#   docker compose up -d postgres         only PostgreSQL; run the two services yourself (see the READMEs)
+#   docker compose --profile apps up -d   PostgreSQL, the orchestrator (Go) and the gateway (Java)
+#
+# The two services share one PostgreSQL server here, but each has its own database.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: gateway
+    ports:
+      - "5432:5432"
+    volumes:
+      - payment-data:/var/lib/postgresql/data
+      - ./scripts/create-databases.sql:/docker-entrypoint-initdb.d/create-databases.sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 2s
+      retries: 30
+
+  orchestrator:
+    profiles: ["apps"]
+    build: ./orchestrator
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/orchestrator
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-local-only-secret-change-me-0123456789}
+      CHECKOUT_BASE_URL: http://localhost:8080/checkout
+    ports:
+      - "8090:8090"   # open only so you can try the connector contract; never open it in live
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  gateway:
+    profiles: ["apps"]
+    build: ./gateway
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/gateway
+      DB_PASSWORD: postgres
+      ORCHESTRATOR_URL: http://orchestrator:8090
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-local-only-secret-change-me-0123456789}
+      SPRING_PROFILES_ACTIVE: dev
+    ports:
+      - "8080:8080"
+    depends_on:
+      - orchestrator
+
+volumes:
+  payment-data:

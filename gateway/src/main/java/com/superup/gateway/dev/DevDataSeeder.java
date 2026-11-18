@@ -11,9 +11,10 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 /**
- * Only with the "dev" profile: creates a demo client, a test bank and a fresh test API key,
+ * Only with the "dev" profile: creates a demo client and a fresh test API key,
  * so you can try the API on your own computer. Never runs in test or live servers.
- * (Until the Back Office is built, this is how a client gets a key.)
+ * (Until the Back Office is built, this is how a client gets a key. Test banks are added in the
+ * orchestrator; see its README.)
  */
 @Component
 @Profile("dev")
@@ -39,11 +40,6 @@ public class DevDataSeeder implements ApplicationRunner {
                 VALUES (?, 'test', 10000000, ARRAY['https://shop.example.com/payment/return'], 'https://shop.example.com/api/payment-webhook')
                 ON CONFLICT DO NOTHING
                 """, MERCHANT);
-        db.update("""
-                INSERT INTO providers (id, code, name_en, type, connector, status)
-                VALUES ('prov_test_wallet', 'TEST_WALLET', 'Test wallet', 'wallet', 'test', 'TESTING')
-                ON CONFLICT DO NOTHING
-                """);
 
         String key = "sk_test_" + Ids.random(32);
         db.update("""

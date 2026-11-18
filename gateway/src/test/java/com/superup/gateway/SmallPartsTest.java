@@ -20,13 +20,6 @@ class SmallPartsTest {
     }
 
     @Test
-    void feesRoundHalfUp() {
-        assertThat(Money.fee(100_000, 150)).isEqualTo(1_500);   // 1,000.00 ETB -> 15.00
-        assertThat(Money.fee(100, 150)).isEqualTo(2);          // 1.5 santim -> 2
-        assertThat(Money.fee(99, 150)).isEqualTo(1);           // 1.485 -> 1
-    }
-
-    @Test
     void theRateLimitBucketEmptiesAndRefills() {
         long start = 0;
         TokenBucket bucket = new TokenBucket(3, 1, start);
