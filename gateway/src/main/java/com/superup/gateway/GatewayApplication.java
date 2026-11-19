@@ -3,20 +3,20 @@ package com.superup.gateway;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
-import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
- * The payment gateway, built in four layers (docs/02-architecture.md, "The four layers"):
- * <ol>
- *   <li>{@code gateway}: is the request real and allowed?</li>
- *   <li>{@code orchestrator}: what happens next?</li>
- *   <li>{@code connectors}: talk to each bank or wallet</li>
- *   <li>{@code record}: the ledger and the database</li>
- * </ol>
+ * The gateway service: layer 1 of docs/02-architecture.md ("The four layers"). It answers one question:
+ * is the request real and allowed? It checks API keys, rate limits, the request itself and idempotency
+ * keys, then hands the payment to the orchestrator service (layer 2, written in Go, in ../orchestrator).
+ * <ul>
+ *   <li>{@code gateway}: the checks</li>
+ *   <li>{@code clients}: part 5, the clients (merchants), their settings and keys</li>
+ *   <li>{@code orchestrator}: the client for the orchestrator service</li>
+ *   <li>{@code api}: the Payment API endpoints</li>
+ * </ul>
  */
 @SpringBootApplication
 @ConfigurationPropertiesScan
-@EnableScheduling
 public class GatewayApplication {
 
     public static void main(String[] args) {

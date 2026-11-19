@@ -1,15 +1,20 @@
-# Payment gateway: phase 1 code
+# Gateway service (Java)
 
-Java 17+, Spring Boot 3.3 and PostgreSQL 16. The design is in [`../docs`](../docs) and [`../README.md`](../README.md).
+Java 17+, Spring Boot 3.3 and PostgreSQL 16. This is layer 1 of [the four layers](../docs/02-architecture.md#the-four-layers), the front door. It answers one question: **is the request real and allowed?** Then it hands the payment to the [orchestrator](../orchestrator/README.md), a separate service written in Go.
 
-## What is built so far
+The gateway never decides a payment result and never moves money.
 
-| Layer ([the four layers](../docs/02-architecture.md#the-four-layers)) | Code | Built now |
-|---|---|---|
-| **1. Gateway**: is the request real and allowed? | `gateway/` | API key check (only a hash of each key is stored), test and live keys kept apart, client status checks, rate limits, request checks with clear error codes, idempotency keys, a request ID on every answer |
-| **2. Orchestrator**: what happens next? | `orchestrator/` | Create a payment, start and move tries, record a success (with ledger journal J1 and the `payment.succeeded` event in one transaction), record a failed try, end a payment (expired or cancelled), the expiry job |
-| **3. Third parties** | `connectors/` | The connector contract only. The test wallet and test bank come next. |
-| **4. Ledger and database** | `record/` and `src/main/resources/db/migration` | The [six parts](../docs/08-data-model.md#the-six-parts-of-layer-4), the double-entry ledger, outbox events, idempotency keys and the audit log |
+## What it does
+
+| Check | How |
+|---|---|
+| **Who is calling?** | API key check. Only a SHA-256 hash of each key is stored. Test and live keys are kept apart, and the client's status is checked (a live key needs an approved client, a suspended client can only read). |
+| **Too many calls?** | Rate limits per key, per IP and for creating payments |
+| **Is the request right?** | Format, amount (a string like `"1500.00"`, never a number), the client's limit per payment, registered return and webhook URLs, with clear error codes |
+| **Is it new?** | Idempotency keys. A retry gets the first answer back. The same key with a different body is refused. |
+| **Which request?** | A request ID on every answer. It is passed on to the orchestrator and into its audit log. |
+
+Its own database holds only part 5 (clients, their settings and API keys) and the idempotency keys. Payments, the ledger and banks live in the orchestrator's database.
 
 The Payment API has three endpoints so far:
 
@@ -17,27 +22,23 @@ The Payment API has three endpoints so far:
 - `GET /api/v1/payment-sessions/{id}`: read it
 - `GET /api/v1/payments/verify/{orderReference}`: check it before delivering goods
 
-### The rules are inside the database
+### How a retry stays safe across two services
 
-The database itself refuses anything that breaks a rule, even when the code has a bug:
-
-- A payment can be paid only once.
-- Successes, failures, ledger journals and the audit log can never be changed or deleted.
-- A success must be for the exact amount, and the payment must still be open.
-- A payment can't end (expire or be cancelled) while a try is still running, because money may be moving.
-- A failed try can become a success only through an approved correction.
-- Every ledger journal must balance (debits = credits).
-- A try's step only moves forward, and it is locked once it has a result.
+The gateway sends the orchestrator a **create key** made from the client, the mode and the Idempotency-Key. The orchestrator makes only one payment per create key. So if the orchestrator is slow or down, the client gets `503` and can retry with the same Idempotency-Key, and it still gets exactly one payment.
 
 ## Run it on your computer
 
-You need **Java 17 or newer** and **Docker** (for PostgreSQL). Maven is not needed: `./mvnw` downloads it.
+You need **Java 17 or newer**. Maven is not needed: `./mvnw` downloads it. Start PostgreSQL and the orchestrator first (see the [orchestrator README](../orchestrator/README.md)).
 
 ```bash
-cd payment_getway/gateway
-docker compose up -d                        # starts PostgreSQL
+docker compose up -d postgres                # from the repository root
+cd gateway
+export DB_PASSWORD=postgres
+export INTERNAL_TOKEN=a-long-random-secret-of-at-least-32-characters   # the same value as the orchestrator
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=dev
 ```
+
+Or run everything in Docker from the repository root: `docker compose --profile apps up -d --build`.
 
 The `dev` profile creates a demo client and prints a new **test** secret key. Then:
 
@@ -49,7 +50,12 @@ curl -X POST http://localhost:8080/api/v1/payment-sessions \
   -d '{"orderReference":"ORDER_10001","amount":"1500.00","currency":"ETB","returnUrl":"https://shop.example.com/payment/return"}'
 ```
 
-Database settings can be changed with `DB_URL`, `DB_USER` and `DB_PASSWORD`. With the Docker database, set `DB_PASSWORD=postgres`.
+| Setting | Default | Meaning |
+|---|---|---|
+| `DB_URL`, `DB_USER`, `DB_PASSWORD` | `jdbc:postgresql://localhost:5432/gateway`, `postgres`, empty | The gateway's own database |
+| `ORCHESTRATOR_URL` | `http://localhost:8090` | Where the orchestrator is |
+| `INTERNAL_TOKEN` | none, required | The shared secret. At least 32 characters. |
+| `PORT` | `8080` | Port to listen on |
 
 ## Run the tests
 
@@ -57,13 +63,14 @@ Database settings can be changed with `DB_URL`, `DB_USER` and `DB_PASSWORD`. Wit
 DB_PASSWORD=postgres ./mvnw test
 ```
 
-The tests use the `gateway_test` database. They cover layer 1 (keys, modes, request checks, idempotency), the payments view (every status), the ledger, and every database rule above.
+The tests use the `gateway_test` database and an in-memory stand-in for the orchestrator (`FakeOrchestrator`), so they don't need the orchestrator running. They cover keys, modes, client status, request checks, idempotency, and what happens when the orchestrator is down. The orchestrator has its own tests.
 
 ## Next steps (phase 1 build order)
 
-1. Test providers behind the connector contract: test wallet (push), test bank (OTP), test redirect bank.
-2. Hosted checkout pages and the checkout API (start a try, enter a code).
-3. Provider callbacks and the pending checker.
-4. The webhook worker: signed webhooks from the outbox, with retries.
-5. Back Office: banks, clients, KYB, keys (this replaces the `dev` demo client).
-6. Refunds, settlement and reconciliation.
+1. Hosted checkout pages and the checkout API (start a try, enter a code), calling the orchestrator.
+2. Provider callbacks, passed on to the right connector.
+3. The webhook worker: signed webhooks from the orchestrator's outbox, with retries.
+4. Back Office: banks, clients, KYB, keys (this replaces the `dev` demo client).
+5. Refunds, settlement and reconciliation.
+
+The connectors are built by others, against the [connector contract](../orchestrator/README.md#the-connector-contract).

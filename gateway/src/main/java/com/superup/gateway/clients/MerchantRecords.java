@@ -1,4 +1,4 @@
-package com.superup.gateway.record;
+package com.superup.gateway.clients;
 
 import java.sql.Array;
 import java.util.Arrays;
@@ -7,7 +7,7 @@ import java.util.Optional;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
-/** Layer 4, part 5: clients (merchants) and their settings per mode. */
+/** Part 5: clients (merchants) and their settings per mode. The gateway service owns these tables. */
 @Repository
 public class MerchantRecords {
 

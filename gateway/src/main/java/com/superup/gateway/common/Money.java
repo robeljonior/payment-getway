@@ -27,9 +27,4 @@ public final class Money {
         long cents = santim % 100;
         return birr + "." + (cents < 10 ? "0" : "") + cents;
     }
-
-    /** Fee in santim for a rate in basis points (150 = 1.5%), rounded half up. */
-    public static long fee(long amountSantim, int basisPoints) {
-        return Math.addExact(Math.multiplyExact(amountSantim, basisPoints), 5_000) / 10_000;
-    }
 }

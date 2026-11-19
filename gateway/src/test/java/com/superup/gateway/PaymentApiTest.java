@@ -14,14 +14,19 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 
-/** The Payment API through all of layer 1: key, rate limits, request checks and idempotency. */
+/**
+ * The Payment API through all of layer 1: key, rate limits, request checks and idempotency.
+ * The orchestrator service is replaced by {@link FakeOrchestrator}; the orchestrator has its own Go tests.
+ */
 @SpringBootTest
+@Import(FakeOrchestrator.class)
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 class PaymentApiTest {
@@ -32,6 +37,8 @@ class PaymentApiTest {
     JdbcTemplate db;
     @Autowired
     ObjectMapper json;
+    @Autowired
+    FakeOrchestrator orchestrator;
 
     private static String body(String orderReference, String amount) {
         return """
@@ -67,7 +74,14 @@ class PaymentApiTest {
         JsonNode session = json.readTree(answer);
         String id = session.get("id").asText();
         assertThat(id).startsWith("ps_");
-        assertThat(session.get("checkoutUrl").asText()).isEqualTo("https://checkout.test/pay/" + id);
+
+        // What the orchestrator was given: santim, the client, the mode and a create key.
+        FakeOrchestrator.Call call = orchestrator.lastCreate();
+        assertThat(call.payment().amount()).isEqualTo(150_000L);
+        assertThat(call.caller().merchantId()).isEqualTo(client.merchantId());
+        assertThat(call.caller().mode()).isEqualTo("test");
+        assertThat(call.createKey()).hasSize(64);
+        assertThat(call.payment().webhookUrl()).isEqualTo(TestData.WEBHOOK_URL);
 
         mvc.perform(get("/api/v1/payment-sessions/" + id).header("Authorization", "Bearer " + client.testKey()))
                 .andExpect(status().isOk())
@@ -78,10 +92,6 @@ class PaymentApiTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(id));
 
-        Integer audits = db.queryForObject(
-                "SELECT count(*) FROM audit_logs WHERE object_id = ? AND action = 'payment_session.created' AND correlation_id LIKE 'req_%'",
-                Integer.class, id);
-        assertThat(audits).isEqualTo(1);
     }
 
     @Test
@@ -152,9 +162,7 @@ class PaymentApiTest {
                 .andExpect(header().string("Idempotent-Replayed", "true"))
                 .andReturn().getResponse().getContentAsString();
         assertThat(second).isEqualTo(first);
-        Integer sessions = db.queryForObject("SELECT count(*) FROM payment_sessions WHERE merchant_id = ?",
-                Integer.class, client.merchantId());
-        assertThat(sessions).isEqualTo(1);
+        assertThat(orchestrator.createsFor(client.merchantId())).isEqualTo(1);
 
         create(client.testKey(), "retry-1", body("ORDER_7", "999.00"))
                 .andExpect(status().isConflict())
@@ -199,9 +207,7 @@ class PaymentApiTest {
                 .andExpect(jsonPath("$.error.code").value("parameter_missing"))
                 .andExpect(jsonPath("$.error.param").value("orderReference"));
 
-        Integer sessions = db.queryForObject("SELECT count(*) FROM payment_sessions WHERE merchant_id = ?",
-                Integer.class, client.merchantId());
-        assertThat(sessions).isZero();
+        assertThat(orchestrator.createsFor(client.merchantId())).isZero();
     }
 
     @Test
@@ -214,5 +220,20 @@ class PaymentApiTest {
         mvc.perform(get("/api/v1/nothing").header("Authorization", "Bearer " + client.testKey()))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error.code").value("route_missing"));
+    }
+
+    @Test
+    void whenTheOrchestratorIsDownTheClientCanRetryWithTheSameKey() throws Exception {
+        TestData.Client client = TestData.client(db, "KYB_REVIEW");
+        orchestrator.failNextCall();
+        create(client.testKey(), "down-1", body("ORDER_9", "10.00"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.error.code").value("service_unavailable"));
+
+        // The key was freed, and the same create key goes to the orchestrator again.
+        String firstKey = orchestrator.lastCreate().createKey();
+        create(client.testKey(), "down-1", body("ORDER_9", "10.00")).andExpect(status().isCreated());
+        assertThat(orchestrator.lastCreate().createKey()).isEqualTo(firstKey);
+        assertThat(orchestrator.createsFor(client.merchantId())).isEqualTo(1);
     }
 }

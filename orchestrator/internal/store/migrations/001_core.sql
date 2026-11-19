@@ -1,6 +1,23 @@
--- Parts 1 to 3 of layer 4: success candidates, successes, failures.
--- Plus the ledger (money book), outbox events, idempotency keys and the audit log.
--- See docs/08-data-model.md. Money is always bigint santim.
+-- The orchestrator's database: layer 4 of docs/02-architecture.md.
+-- Part 6 (banks and wallets), parts 1 to 3 (success candidates, successes, failures),
+-- part 4 (the payments view), the double-entry ledger, outbox events and the audit log.
+-- Part 5 (clients) and API keys belong to the gateway service and its own database.
+-- Money is always bigint santim.
+
+-- Part 6: banks and wallets (providers)
+CREATE TABLE providers (
+    id          text PRIMARY KEY,
+    code        text NOT NULL UNIQUE,
+    name_en     text NOT NULL,
+    name_am     text,
+    type        text NOT NULL CHECK (type IN ('bank', 'wallet', 'switch', 'card')),
+    connector   text NOT NULL,
+    status      text NOT NULL DEFAULT 'DRAFT'
+                CHECK (status IN ('DRAFT', 'TESTING', 'ACTIVE', 'PAUSED', 'RETIRED')),
+    min_amount  bigint,
+    max_amount  bigint,
+    created_at  timestamptz NOT NULL DEFAULT now()
+);
 
 -- A small helper: some tables only ever get new rows.
 CREATE FUNCTION forbid_change() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -14,7 +31,8 @@ END $$;
 ------------------------------------------------------------------
 CREATE TABLE payment_sessions (
     id                 text PRIMARY KEY,
-    merchant_id        text NOT NULL REFERENCES merchants (id),
+    create_key         text NOT NULL UNIQUE,   -- the gateway's idempotency key, so a retried call never makes two payments
+    merchant_id        text NOT NULL,   -- the client, owned by the gateway service
     mode               text NOT NULL CHECK (mode IN ('test', 'live')),
     order_reference    text NOT NULL,
     amount             bigint NOT NULL CHECK (amount > 0),
@@ -316,11 +334,11 @@ SELECT s.id                              AS session_id,
                       ORDER BY f.failed_at DESC LIMIT 1) last_fail ON true;
 
 ------------------------------------------------------------------
--- Events, idempotency and audit
+-- Events and audit
 ------------------------------------------------------------------
 CREATE TABLE outbox_events (
     id            text PRIMARY KEY,
-    merchant_id   text NOT NULL REFERENCES merchants (id),
+    merchant_id   text NOT NULL,
     mode          text NOT NULL CHECK (mode IN ('test', 'live')),
     type          text NOT NULL,
     payload       jsonb NOT NULL,
@@ -329,23 +347,9 @@ CREATE TABLE outbox_events (
 );
 CREATE INDEX outbox_events_unpublished ON outbox_events (created_at) WHERE published_at IS NULL;
 
-CREATE TABLE idempotency_keys (
-    merchant_id      text NOT NULL REFERENCES merchants (id),
-    mode             text NOT NULL CHECK (mode IN ('test', 'live')),
-    endpoint         text NOT NULL,
-    key              text NOT NULL CHECK (length(key) BETWEEN 1 AND 255),
-    request_hash     text NOT NULL,
-    status           text NOT NULL CHECK (status IN ('IN_PROGRESS', 'DONE')),
-    response_status  int,
-    response_body    text,
-    created_at       timestamptz NOT NULL DEFAULT now(),
-    expires_at       timestamptz NOT NULL,
-    PRIMARY KEY (merchant_id, mode, endpoint, key)
-);
-
 CREATE TABLE audit_logs (
     id              bigserial PRIMARY KEY,
-    actor_type      text NOT NULL CHECK (actor_type IN ('merchant_key', 'staff', 'system', 'provider')),
+    actor_type      text NOT NULL CHECK (actor_type IN ('merchant_key', 'staff', 'system', 'provider', 'connector')),
     actor_id        text NOT NULL,
     action          text NOT NULL,
     object_type     text,
